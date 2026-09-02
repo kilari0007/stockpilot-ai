@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 class SignalOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -10,7 +10,10 @@ class SignalOut(BaseModel):
 
 class ScanRequest(BaseModel):
     tickers: list[str]
-    earnings_dates: dict[str, datetime] = {}
+    earnings_dates: dict[str, datetime] = Field(default_factory=dict)
+
+class WatchlistUpdate(BaseModel):
+    tickers: list[str]
 
 class PositionCreate(BaseModel):
     ticker: str; entry: float; quantity: float; stop: float; target: float

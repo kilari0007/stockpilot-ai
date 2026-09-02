@@ -29,3 +29,8 @@ class PaperPosition(Base):
     status: Mapped[str] = mapped_column(String(12), default="OPEN")
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+class WatchlistItem(Base):
+    __tablename__ = "watchlist_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(12), unique=True, index=True)

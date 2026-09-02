@@ -5,16 +5,22 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from .config import settings
 from .db import Base, SessionLocal, engine
-from .models import PaperPosition, Signal
-from .schemas import PositionClose, PositionCreate, PositionOut, ScanRequest, SignalOut
+from .models import PaperPosition, Signal, WatchlistItem
+from .schemas import PositionClose, PositionCreate, PositionOut, ScanRequest, SignalOut, WatchlistUpdate
+from .services.earnings import upcoming_earnings
 from .services.market import history
 from .services.strategy import evaluate
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(engine); yield
+    Base.metadata.create_all(engine)
+    scheduler=AsyncIOScheduler(timezone="America/New_York")
+    scheduler.add_job(scheduled_scan,CronTrigger(day_of_week="mon-fri",hour=16,minute=30),id="daily-watchlist-scan",replace_existing=True)
+    scheduler.start(); yield; scheduler.shutdown(wait=False)
 
 app=FastAPI(title=settings.app_name,version="0.2.0",lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=settings.cors_origins.split(","),allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
@@ -27,6 +33,21 @@ def db():
 def persist_signal(result:dict,session:Session):
     keys=("ticker","label","confidence","price","entry_low","entry_high","stop","target","rationale")
     row=Signal(**{k:result[k] for k in keys}); session.add(row); session.commit(); session.refresh(row); return row
+
+async def run_scan(tickers:list[str],session:Session,provided:dict|None=None):
+    earnings=provided or await upcoming_earnings(tickers)
+    spy=await history("SPY"); data=await asyncio.gather(*(history(t) for t in tickers),return_exceptions=True); results=[]
+    for ticker,bars in zip(tickers,data):
+        if isinstance(bars,Exception): results.append({"ticker":ticker,"error":str(bars)}); continue
+        result=evaluate(ticker,bars,spy,earnings.get(ticker)); persist_signal(result,session); results.append(result)
+    return results
+
+async def scheduled_scan():
+    session=SessionLocal()
+    try:
+        tickers=[x.ticker for x in session.scalars(select(WatchlistItem)).all()]
+        if tickers: await run_scan(tickers,session)
+    finally: session.close()
 
 @app.get("/health")
 def health(): return {"status":"healthy","version":"0.2.0"}
@@ -44,10 +65,7 @@ async def scan(body:ScanRequest,session:Session=Depends(db)):
     tickers=list(dict.fromkeys(t.upper().strip() for t in body.tickers if t.strip()))[:25]
     if not tickers: raise HTTPException(400,"At least one ticker is required")
     try:
-        spy=await history("SPY"); data=await asyncio.gather(*(history(t) for t in tickers),return_exceptions=True); results=[]
-        for ticker,bars in zip(tickers,data):
-            if isinstance(bars,Exception): results.append({"ticker":ticker,"error":str(bars)}); continue
-            result=evaluate(ticker,bars,spy,body.earnings_dates.get(ticker)); persist_signal(result,session); results.append(result)
+        results=await run_scan(tickers,session,body.earnings_dates or None)
         return {"count":len(results),"results":results}
     except Exception as exc: raise HTTPException(502,f"Scanner unavailable: {exc}") from exc
 
@@ -76,3 +94,18 @@ def performance(session:Session=Depends(db)):
     rows=session.scalars(select(PaperPosition).where(PaperPosition.status=="CLOSED")).all(); pnl=[(r.exit_price-r.entry)*r.quantity for r in rows]
     wins=[x for x in pnl if x>0]; losses=[x for x in pnl if x<=0]
     return {"closed_trades":len(rows),"win_rate":round(100*len(wins)/len(rows),1) if rows else 0,"realized_pnl":round(sum(pnl),2),"profit_factor":round(sum(wins)/abs(sum(losses)),2) if losses and sum(losses) else None}
+
+@app.get("/api/v1/watchlist")
+def get_watchlist(session:Session=Depends(db)): return {"tickers":[x.ticker for x in session.scalars(select(WatchlistItem).order_by(WatchlistItem.ticker)).all()]}
+
+@app.put("/api/v1/watchlist")
+def save_watchlist(body:WatchlistUpdate,session:Session=Depends(db)):
+    tickers=list(dict.fromkeys(t.upper().strip() for t in body.tickers if t.strip()))[:25]
+    for row in session.scalars(select(WatchlistItem)).all(): session.delete(row)
+    session.add_all([WatchlistItem(ticker=t) for t in tickers]); session.commit()
+    return {"tickers":tickers,"scheduled_scan":"4:30 PM America/New_York, weekdays"}
+
+@app.get("/api/v1/earnings")
+async def earnings(tickers:str):
+    symbols=[x.strip().upper() for x in tickers.split(",") if x.strip()][:25]
+    return {k:v.isoformat() for k,v in (await upcoming_earnings(symbols)).items()}
