@@ -17,3 +17,15 @@ class Signal(Base):
     rationale: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+class PaperPosition(Base):
+    __tablename__ = "paper_positions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(12), index=True)
+    entry: Mapped[float] = mapped_column(Float)
+    quantity: Mapped[float] = mapped_column(Float)
+    stop: Mapped[float] = mapped_column(Float)
+    target: Mapped[float] = mapped_column(Float)
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="OPEN")
+    opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
