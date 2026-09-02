@@ -12,6 +12,10 @@ class ScanRequest(BaseModel):
     tickers: list[str]
     earnings_dates: dict[str, datetime] = Field(default_factory=dict)
 
+class UniverseScanRequest(BaseModel):
+    universe: str = "mega_cap"
+    top_n: int = Field(default=10,ge=1,le=25)
+
 class WatchlistUpdate(BaseModel):
     tickers: list[str]
 
