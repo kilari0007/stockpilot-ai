@@ -10,10 +10,11 @@ from apscheduler.triggers.cron import CronTrigger
 from .config import settings
 from .db import Base, SessionLocal, engine
 from .models import PaperPosition, Signal, WatchlistItem
-from .schemas import PositionClose, PositionCreate, PositionOut, ScanRequest, SignalOut, WatchlistUpdate
+from .schemas import PositionClose, PositionCreate, PositionOut, ScanRequest, SignalOut, UniverseScanRequest, WatchlistUpdate
 from .services.earnings import upcoming_earnings
 from .services.market import history
 from .services.strategy import evaluate
+from .universes import UNIVERSES
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -68,6 +69,23 @@ async def scan(body:ScanRequest,session:Session=Depends(db)):
         results=await run_scan(tickers,session,body.earnings_dates or None)
         return {"count":len(results),"results":results}
     except Exception as exc: raise HTTPException(502,f"Scanner unavailable: {exc}") from exc
+
+@app.get("/api/v1/universes")
+def universes():
+    return [{"id":key,"name":value["name"],"description":value["description"],"size":len(value["tickers"])} for key,value in UNIVERSES.items()]
+
+@app.post("/api/v1/scan/universe")
+async def scan_universe(body:UniverseScanRequest,session:Session=Depends(db)):
+    universe=UNIVERSES.get(body.universe)
+    if not universe: raise HTTPException(404,"Unknown scanner universe")
+    tickers=universe["tickers"]
+    try:
+        results=await run_scan(tickers,session)
+        valid=[item for item in results if not item.get("error")]
+        rank={"STRONG BUY":3,"BUY":2,"WATCH":1,"AVOID":0}
+        ranked=sorted(valid,key=lambda item:(rank.get(item["label"],0),item["confidence"]),reverse=True)[:body.top_n]
+        return {"universe":body.universe,"universe_name":universe["name"],"scanned":len(tickers),"successful":len(valid),"count":len(ranked),"results":ranked}
+    except Exception as exc: raise HTTPException(502,f"Universe scanner unavailable: {exc}") from exc
 
 @app.get("/api/v1/signals",response_model=list[SignalOut])
 def signals(limit:int=50,session:Session=Depends(db)):
