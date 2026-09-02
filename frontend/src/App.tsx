@@ -8,6 +8,12 @@ type Perf={closed_trades:number;win_rate:number;realized_pnl:number;profit_facto
 type Universe={id:string;name:string;description:string;size:number};
 const API_BASE=(import.meta.env.VITE_API_URL??'').replace(/\/$/,'');
 const api=(path:string,options?:RequestInit)=>fetch(`${API_BASE}${path}`,options);
+async function json<T>(path:string,options?:RequestInit):Promise<T>{
+ const response=await api(path,options);
+ const payload=await response.json().catch(()=>null);
+ if(!response.ok)throw new Error(payload?.detail??`Request failed (${response.status})`);
+ return payload as T;
+}
 
 export default function App(){
  const [screen,setScreen]=useState<Screen>('overview');
@@ -17,15 +23,15 @@ export default function App(){
  const [loading,setLoading]=useState(false),[error,setError]=useState('');
  const [perf,setPerf]=useState<Perf>({closed_trades:0,win_rate:0,realized_pnl:0,profit_factor:null});
  const [closePrices,setClosePrices]=useState<Record<number,string>>({});
- useEffect(()=>{void refreshSummary();api('/api/v1/universes').then(r=>r.json()).then(setUniverses).catch(()=>{})},[]);
+ useEffect(()=>{void refreshSummary();json<Universe[]>('/api/v1/universes').then(setUniverses).catch(()=>setError('Could not load scanner universes'))},[]);
  useEffect(()=>{if(screen==='journal')void refreshJournal()},[screen]);
- async function refreshSummary(){api('/api/v1/performance').then(r=>r.json()).then(setPerf).catch(()=>{})}
- async function refreshJournal(){try{const [s,p]=await Promise.all([api('/api/v1/signals?limit=100'),api('/api/v1/positions')]);setJournal(await s.json());setPositions(await p.json())}catch{setError('Could not load journal data')}}
+ async function refreshSummary(){json<Perf>('/api/v1/performance').then(setPerf).catch(()=>{})}
+ async function refreshJournal(){setError('');try{const [s,p]=await Promise.all([json<Signal[]>('/api/v1/signals?limit=100'),json<Position[]>('/api/v1/positions')]);setJournal(s);setPositions(p)}catch{setError('Could not load journal data')}}
  async function manualScan(){const tickers=symbols.split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);await run('/api/v1/scan',{tickers,earnings_dates:{}})}
  async function universeScan(){await run('/api/v1/scan/universe',{universe,top_n:10})}
- async function run(path:string,body:unknown){setLoading(true);setError('');try{const r=await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok)throw new Error((await r.json()).detail);setSignals((await r.json()).results);setScreen('signals')}catch(e){setError(e instanceof Error?e.message:'Scan failed')}finally{setLoading(false)}}
- async function paper(s:Signal){const quantity=Math.max(1,Math.floor(500/Math.max(.01,s.price-s.stop)));const r=await api('/api/v1/positions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:s.ticker,entry:s.price,quantity,stop:s.stop,target:s.target})});if(!r.ok){setError((await r.json()).detail);return}setError(`${s.ticker} added to paper portfolio — ${quantity} shares`)}
- async function closePosition(p:Position){const exit=Number(closePrices[p.id]);if(!exit||exit<=0){setError('Enter a valid exit price');return}const r=await api(`/api/v1/positions/${p.id}/close`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({exit_price:exit})});if(!r.ok){setError((await r.json()).detail);return}await refreshJournal();await refreshSummary();setError(`${p.ticker} paper position closed`)}
+ async function run(path:string,body:unknown){setLoading(true);setError('');try{const result=await json<{results:Signal[]}>(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});setSignals(result.results);setScreen('signals')}catch(e){setError(e instanceof Error?e.message:'Scan failed')}finally{setLoading(false)}}
+ async function paper(s:Signal){const quantity=Math.max(1,Math.floor(500/Math.max(.01,s.price-s.stop)));try{await json<Position>('/api/v1/positions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:s.ticker,entry:s.price,quantity,stop:s.stop,target:s.target})});setError(`${s.ticker} added to paper portfolio — ${quantity} shares`)}catch(e){setError(e instanceof Error?e.message:'Could not add paper trade')}}
+ async function closePosition(p:Position){const exit=Number(closePrices[p.id]);if(!exit||exit<=0){setError('Enter a valid exit price');return}try{await json<Position>(`/api/v1/positions/${p.id}/close`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({exit_price:exit})});await refreshJournal();await refreshSummary();setError(`${p.ticker} paper position closed`)}catch(e){setError(e instanceof Error?e.message:'Could not close paper position')}}
  return <main><aside><div className="brand"><Activity/> StockPilot <b>AI</b></div><nav><button className={screen==='overview'?'active':''} onClick={()=>setScreen('overview')}><BarChart3/> Overview</button><button className={screen==='signals'?'active':''} onClick={()=>setScreen('signals')}><TrendingUp/> Signals</button><button className={screen==='journal'?'active':''} onClick={()=>setScreen('journal')}><BookOpen/> Journal</button></nav><div className="safe"><ShieldCheck/><div><b>Paper mode</b><small>No broker orders</small></div></div></aside><section><header><div><p className="eyebrow">TRADING COMMAND CENTER</p><h1>{screen==='overview'?'Good morning, Nari.':screen==='signals'?'Ranked Signals':'Signal & Trade Journal'}</h1><p>{screen==='overview'?'Scan selectively. Record every decision.':screen==='signals'?'Only the highest-scoring setups from the selected universe.':'Review every signal and paper-trade outcome.'}</p></div><div className="status">● V2 ENGINE READY</div></header>{error&&<p className={error.includes('added')||error.includes('closed')?'success flash':'error flash'}>{error}</p>}{screen==='overview'&&<Overview perf={perf} universes={universes} universe={universe} setUniverse={setUniverse} symbols={symbols} setSymbols={setSymbols} loading={loading} universeScan={universeScan} manualScan={manualScan}/>} {screen==='signals'&&<SignalsTable signals={signals} loading={loading} onScan={()=>setScreen('overview')} paper={paper}/>} {screen==='journal'&&<Journal signals={journal} positions={positions} closePrices={closePrices} setClosePrices={setClosePrices} closePosition={closePosition}/>}</section></main>
 }
 

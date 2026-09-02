@@ -24,6 +24,18 @@ npm run dev
 
 Open http://localhost:5173. API docs are at http://localhost:8000/docs.
 
+## Render deployment
+
+The root `render.yaml` defines three resources for the monorepo:
+
+- `kilari-stockpilot-web`: the Vite static site
+- `kilari-stockpilot-api`: the FastAPI service
+- `kilari-stockpilot-db`: PostgreSQL storage for signals and the paper journal
+
+In Render, create or sync a Blueprint from this repository's `main` branch. The
+frontend build receives the API URL automatically, and the API accepts browser
+requests from the deployed static site. The API health check is `/health`.
+
 ## Version 2 strategy
 
 - Long-only swing pullback
@@ -35,4 +47,3 @@ Open http://localhost:5173. API docs are at http://localhost:8000/docs.
 - Reject signals near earnings or when entry gaps more than 1 ATR
 
 The preliminary validation produced a 60% win rate and 1.14 profit factor. Historical results are not guarantees.
-

@@ -24,7 +24,14 @@ async def lifespan(_: FastAPI):
     scheduler.start(); yield; scheduler.shutdown(wait=False)
 
 app=FastAPI(title=settings.app_name,version="0.2.0",lifespan=lifespan)
-app.add_middleware(CORSMiddleware,allow_origins=settings.cors_origins.split(","),allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
+allowed_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials="*" not in allowed_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def db():
     session=SessionLocal()
