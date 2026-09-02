@@ -1,0 +1,11 @@
+[project]
+name = "stockpilot-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "sqlalchemy>=2.0", "pydantic-settings>=2.5", "httpx[socks]>=0.27", "pandas>=2.2", "numpy>=2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.7"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
